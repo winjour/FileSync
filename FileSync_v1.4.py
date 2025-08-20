@@ -1,7 +1,8 @@
 # 电脑文件本地增量同步v1.4
 # 记忆上次同步设置和日志
 # 仅贡献模式
-# 增加定时同步
+# 可定时同步
+# 可保存文件历史版本
 
 import os
 import shutil
@@ -82,7 +83,8 @@ class FileSyncApp:
         # 同步选项
         options_frame = ttk.LabelFrame(main_frame, text="同步选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
-        timer_frame = ttk.Frame(options_frame) #定时同步设置
+        # 定时同步设置框架
+        timer_frame = ttk.Frame(options_frame)
         timer_frame.pack(fill=tk.X, pady=5)
 
         # 定时同步复选框
@@ -92,12 +94,24 @@ class FileSyncApp:
                                    command=self.toggle_timer)
         timer_cb.pack(side=tk.LEFT, padx=5)
 
-        # 定时间隔输入框
+        # 小时输入
         ttk.Label(timer_frame, text="间隔:").pack(side=tk.LEFT, padx=(15, 5))
-        self.timer_interval = tk.StringVar(value="60")
-        interval_entry = ttk.Entry(timer_frame, textvariable=self.timer_interval, width=5)
-        interval_entry.pack(side=tk.LEFT)
-        ttk.Label(timer_frame, text="分钟").pack(side=tk.LEFT, padx=5)
+        self.timer_hour = tk.StringVar(value="0")
+        hour_entry = ttk.Entry(timer_frame, textvariable=self.timer_hour, width=3)
+        hour_entry.pack(side=tk.LEFT)
+        ttk.Label(timer_frame, text="小时").pack(side=tk.LEFT, padx=(0, 5))
+
+        # 分钟输入
+        self.timer_min = tk.StringVar(value="60")
+        min_entry = ttk.Entry(timer_frame, textvariable=self.timer_min, width=3)
+        min_entry.pack(side=tk.LEFT)
+        ttk.Label(timer_frame, text="分钟").pack(side=tk.LEFT, padx=(0, 5))
+
+        # 秒钟输入
+        self.timer_sec = tk.StringVar(value="0")
+        sec_entry = ttk.Entry(timer_frame, textvariable=self.timer_sec, width=3)
+        sec_entry.pack(side=tk.LEFT)
+        ttk.Label(timer_frame, text="秒").pack(side=tk.LEFT, padx=(0, 5))
 
         # 下次同步时间显示
         self.next_sync_var = tk.StringVar(value="")
@@ -110,6 +124,31 @@ class FileSyncApp:
                               text="贡献模式: 仅同步新增和修改的文件，不会删除目标文件夹中的文件",
                               justify=tk.LEFT)
         mode_info.pack(anchor=tk.W, padx=5, pady=5)
+
+        # 历史版本设置框架
+        history_frame = ttk.Frame(options_frame)
+        history_frame.pack(fill=tk.X, pady=5)
+
+        # 历史版本管理复选框
+        self.history_var = tk.BooleanVar(value=False)
+        history_cb = ttk.Checkbutton(history_frame, text="保存文件历史版本",
+                                    variable=self.history_var)
+        history_cb.pack(side=tk.LEFT, padx=5)
+
+        # 历史版本存储位置
+        ttk.Label(history_frame, text="历史版本存储位置:").pack(side=tk.LEFT, padx=(15, 5))
+        self.history_dir_var = tk.StringVar()
+        history_entry = ttk.Entry(history_frame, textvariable=self.history_dir_var, width=30)
+        history_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(history_frame, text="浏览...", command=self.browse_history_dir).pack(side=tk.LEFT, padx=5)
+
+        # 最大历史版本数量
+        history_max_frame = ttk.Frame(options_frame)
+        history_max_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(history_max_frame, text="每个文件最大历史版本数量:").pack(side=tk.LEFT, padx=5)
+        self.max_history_var = tk.StringVar(value="5")
+        ttk.Entry(history_max_frame, textvariable=self.max_history_var, width=5).pack(side=tk.LEFT)
+        ttk.Label(history_max_frame, text="(0表示不限制)").pack(side=tk.LEFT, padx=5)
 
         # 实时监控选项和状态显示
         monitor_frame = ttk.Frame(options_frame)
@@ -322,6 +361,10 @@ class FileSyncApp:
                 # 确保目标目录存在
                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
+                # 处理历史版本
+                if self.history_var.get() and action == 'update' and os.path.exists(dest_path):
+                    self.save_file_history(dest_path, rel_path)
+
                 # 复制文件
                 shutil.copy2(source_path, dest_path)
                 status = "成功"
@@ -373,12 +416,39 @@ class FileSyncApp:
             self.sync_button.config(state=tk.DISABLED)
             self.status_var.set("正在同步...")
 
-            # 在新线程中执行同步
-            sync_thread = threading.Thread(target=self.perform_sync)
+            # 在新线程中执行同步，非静默模式
+            sync_thread = threading.Thread(target=lambda: self.perform_sync(silent=False))
             sync_thread.daemon = True
             sync_thread.start()
 
-    def perform_sync(self):
+    def silent_sync(self):
+        """执行同步而不弹出确认对话框"""
+        # 检查源目录和目标目录是否有效
+        source_dir = self.source_var.get()
+        dest_dir = self.dest_var.get()
+
+        if not source_dir or not os.path.isdir(source_dir):
+            self.status_var.set("错误: 源文件夹无效")
+            return
+
+        if not dest_dir or not os.path.isdir(dest_dir):
+            self.status_var.set("错误: 目标文件夹无效")
+            return
+
+        if self.syncing:
+            return
+
+        # 开始同步
+        self.syncing = True
+        self.sync_button.config(state=tk.DISABLED)
+        self.status_var.set("定时同步开始...")
+
+        # 在新线程中执行同步，静默模式
+        sync_thread = threading.Thread(target=lambda: self.perform_sync(silent=True))
+        sync_thread.daemon = True
+        sync_thread.start()
+
+    def perform_sync(self, silent=False):
         """执行全量同步"""
         try:
             source_dir = self.source_var.get()
@@ -396,6 +466,10 @@ class FileSyncApp:
                 if rel_path not in dest_states or dest_states[rel_path] != src_hash:
                     source_path = os.path.join(source_dir, rel_path)
                     dest_path = os.path.join(dest_dir, rel_path)
+
+                    # 保存历史版本
+                    if self.history_var.get() and rel_path in dest_states and os.path.exists(dest_path):
+                        self.save_file_history(dest_path, rel_path)
 
                     # 获取文件大小
                     file_size_bytes = os.path.getsize(source_path)
@@ -415,8 +489,6 @@ class FileSyncApp:
                     self.root.after(0, lambda t=timestamp, a=action, p=rel_path, s=file_size:
                     self.log_tree.insert("", 0, values=(t, a, p, s, "成功")))
 
-            # 删除处理部分已移除
-
             # 格式化总流量显示
             total_size_formatted = "0 B"
             size_bytes = total_bytes
@@ -426,13 +498,18 @@ class FileSyncApp:
                     break
                 size_bytes /= 1024.0
 
-            self.root.after(0, lambda: self.status_var.set(
-                f"同步完成，共处理 {files_processed} 个文件，总数据量 {total_size_formatted}"))
-            self.root.after(0, lambda: messagebox.showinfo("成功",
-                                                           f"文件同步完成，共处理 {files_processed} 个文件，总数据量 {total_size_formatted}"))
+            completion_message = f"同步完成，共处理 {files_processed} 个文件，总数据量 {total_size_formatted}"
+            self.root.after(0, lambda: self.status_var.set(completion_message))
+
+            # 只有在非静默模式下才显示弹窗
+            if not silent:
+                self.root.after(0, lambda: messagebox.showinfo("成功", completion_message))
         except Exception as e:
-            self.root.after(0, lambda: self.status_var.set(f"同步错误: {str(e)}"))
-            self.root.after(0, lambda: messagebox.showerror("错误", f"同步过程中发生错误: {str(e)}"))
+            error_message = f"同步错误: {str(e)}"
+            self.root.after(0, lambda: self.status_var.set(error_message))
+            # 只有在非静默模式下才显示错误弹窗
+            if not silent:
+                self.root.after(0, lambda: messagebox.showerror("错误", f"同步过程中发生错误: {str(e)}"))
         finally:
             self.syncing = False
             self.root.after(0, lambda: self.sync_button.config(state=tk.NORMAL))
@@ -445,7 +522,12 @@ class FileSyncApp:
             "dest_dir": self.dest_var.get(),
             "monitor_enabled": self.monitor_var.get(),
             "timer_enabled": self.timer_var.get(),
-            "timer_interval": self.timer_interval.get()
+            "timer_hour": self.timer_hour.get(),
+            "timer_min": self.timer_min.get(),
+            "timer_sec": self.timer_sec.get(),
+            "history_enabled": self.history_var.get(),
+            "history_dir": self.history_dir_var.get(),
+            "max_history": self.max_history_var.get()
         }
 
         try:
@@ -466,6 +548,22 @@ class FileSyncApp:
             if "dest_dir" in settings and os.path.isdir(settings["dest_dir"]):
                 self.dest_var.set(settings["dest_dir"])
 
+            # 加载定时器设置
+            if "timer_hour" in settings:
+                self.timer_hour.set(settings["timer_hour"])
+            if "timer_min" in settings:
+                self.timer_min.set(settings["timer_min"])
+            if "timer_sec" in settings:
+                self.timer_sec.set(settings["timer_sec"])
+
+            # 加载历史版本设置
+            if "history_enabled" in settings:
+                self.history_var.set(settings["history_enabled"])
+            if "history_dir" in settings:
+                self.history_dir_var.set(settings["history_dir"])
+            if "max_history" in settings:
+                self.max_history_var.set(settings["max_history"])
+
             if "monitor_enabled" in settings:
                 self.monitor_var.set(settings["monitor_enabled"])
                 if settings["monitor_enabled"] and self.source_var.get():
@@ -474,9 +572,6 @@ class FileSyncApp:
                     # 设置监控状态显示
                     self.monitor_status_var.set("正在监控中...")
                     self.monitor_status.config(foreground="green")
-
-            if "timer_interval" in settings:
-                self.timer_interval.set(settings["timer_interval"])
 
             if "timer_enabled" in settings and settings["timer_enabled"]:
                 self.timer_var.set(True)
@@ -537,12 +632,19 @@ class FileSyncApp:
         if self.timer_var.get():
             try:
                 # 检查间隔设置是否有效
-                interval = int(self.timer_interval.get())
-                if interval <= 0:
-                    raise ValueError("间隔必须大于0")
+                hours = int(self.timer_hour.get())
+                minutes = int(self.timer_min.get())
+                seconds = int(self.timer_sec.get())
+
+                # 确保至少有一个值大于0
+                if hours <= 0 and minutes <= 0 and seconds <= 0:
+                    raise ValueError("至少需要设置一个大于0的时间间隔")
+
+                # 计算总秒数
+                total_seconds = hours * 3600 + minutes * 60 + seconds
 
                 # 启动定时器
-                self.start_timer(interval)
+                self.start_timer(total_seconds)
                 self.next_sync_label.config(foreground="green")
             except ValueError as e:
                 messagebox.showerror("错误", f"请输入有效的时间间隔: {str(e)}")
@@ -553,16 +655,16 @@ class FileSyncApp:
             self.next_sync_var.set("")
             self.next_sync_label.config(foreground="gray")
 
-    def start_timer(self, interval):
+    def start_timer(self, total_seconds):
         """启动定时器"""
         # 取消现有的定时器
         if hasattr(self, 'timer_id') and self.timer_id:
             self.root.after_cancel(self.timer_id)
 
         # 计算下次同步时间
-        interval_ms = interval * 60 * 1000  # 转换为毫秒
-        next_time = datetime.now() + timedelta(minutes=interval)
-        self.next_sync_var.set(f"下次同步: {next_time.strftime('%H:%M:%S')}")
+        interval_ms = total_seconds * 1000  # 转换为毫秒
+        next_time = datetime.now() + timedelta(seconds=total_seconds)
+        self.next_sync_var.set(f"下次同步: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         # 设置新的定时器
         self.timer_id = self.root.after(interval_ms, self.timer_sync)
@@ -572,6 +674,8 @@ class FileSyncApp:
         if hasattr(self, 'timer_id') and self.timer_id:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
+            self.next_sync_var.set("")
+            self.next_sync_label.config(foreground="gray")
 
     def timer_sync(self):
         """定时器触发的同步操作"""
@@ -581,8 +685,11 @@ class FileSyncApp:
 
         # 如果定时器仍然启用，则设置下一次定时器
         if self.timer_var.get():
-            interval = int(self.timer_interval.get())
-            self.start_timer(interval)
+            hours = int(self.timer_hour.get())
+            minutes = int(self.timer_min.get())
+            seconds = int(self.timer_sec.get())
+            total_seconds = hours * 3600 + minutes * 60 + seconds
+            self.start_timer(total_seconds)
 
     def silent_sync(self):
         """执行同步而不弹出确认对话框"""
@@ -610,6 +717,71 @@ class FileSyncApp:
         sync_thread = threading.Thread(target=self.perform_sync)
         sync_thread.daemon = True
         sync_thread.start()
+
+    def browse_history_dir(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.history_dir_var.set(directory)
+
+    def save_file_history(self, file_path, rel_path):
+        """保存文件的历史版本"""
+        try:
+            history_dir = self.history_dir_var.get()
+            if not history_dir or not os.path.isdir(history_dir):
+                # 如果未设置历史目录或目录无效，则使用默认目录
+                history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history_versions")
+
+            # 确保历史版本根目录存在
+            os.makedirs(history_dir, exist_ok=True)
+
+            # 创建文件对应的历史版本子目录
+            file_history_dir = os.path.join(history_dir, os.path.dirname(rel_path))
+            os.makedirs(file_history_dir, exist_ok=True)
+
+            # 文件名加上时间戳作为历史版本文件名
+            filename = os.path.basename(file_path)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            history_filename = f"{os.path.splitext(filename)[0]}_{timestamp}{os.path.splitext(filename)[1]}"
+            history_path = os.path.join(file_history_dir, history_filename)
+
+            # 复制当前文件作为历史版本
+            shutil.copy2(file_path, history_path)
+
+            # 检查是否需要限制历史版本数量
+            self.clean_old_history_versions(file_history_dir, filename)
+
+            return True
+        except Exception as e:
+            print(f"保存历史版本失败: {e}")
+            return False
+
+    def clean_old_history_versions(self, history_dir, filename):
+        """清理旧的历史版本，保持历史版本数量在限制范围内"""
+        try:
+            max_versions = int(self.max_history_var.get())
+            if max_versions <= 0:  # 0表示不限制
+                return
+
+            # 获取文件名前缀
+            name_prefix = os.path.splitext(filename)[0]
+            ext = os.path.splitext(filename)[1]
+
+            # 获取所有该文件的历史版本
+            history_files = []
+            for f in os.listdir(history_dir):
+                if f.startswith(name_prefix + "_") and f.endswith(ext):
+                    file_path = os.path.join(history_dir, f)
+                    history_files.append((file_path, os.path.getmtime(file_path)))
+
+            # 按修改时间排序
+            history_files.sort(key=lambda x: x[1], reverse=True)
+
+            # 删除超出限制的旧版本
+            if len(history_files) > max_versions:
+                for file_path, _ in history_files[max_versions:]:
+                    os.remove(file_path)
+        except Exception as e:
+            print(f"清理旧历史版本失败: {e}")
 
 if __name__ == "__main__":
     root = tk.Tk()
