@@ -12,6 +12,7 @@ import threading
 from datetime import datetime
 import queue
 import json
+from datetime import datetime, timedelta
 
 class FileSyncApp:
     def __init__(self, root):
@@ -41,6 +42,9 @@ class FileSyncApp:
         # 停止监控线程
         if self.monitor_var.get():
             self.stop_monitor = True
+
+        # 停止定时器
+        self.stop_timer()
 
         # 保存设置和历史
         self.save_settings()
@@ -77,6 +81,41 @@ class FileSyncApp:
         # 同步选项
         options_frame = ttk.LabelFrame(main_frame, text="同步选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
+        # 定时同步设置框架
+        timer_frame = ttk.Frame(options_frame)
+        timer_frame.pack(fill=tk.X, pady=5)
+
+        # 定时同步复选框
+        self.timer_var = tk.BooleanVar(value=False)
+        timer_cb = ttk.Checkbutton(timer_frame, text="启用定时同步",
+                                   variable=self.timer_var,
+                                   command=self.toggle_timer)
+        timer_cb.pack(side=tk.LEFT, padx=5)
+
+        # 小时输入
+        ttk.Label(timer_frame, text="间隔:").pack(side=tk.LEFT, padx=(15, 5))
+        self.timer_hour = tk.StringVar(value="0")
+        hour_entry = ttk.Entry(timer_frame, textvariable=self.timer_hour, width=3)
+        hour_entry.pack(side=tk.LEFT)
+        ttk.Label(timer_frame, text="小时").pack(side=tk.LEFT, padx=(0, 5))
+
+        # 分钟输入
+        self.timer_min = tk.StringVar(value="60")
+        min_entry = ttk.Entry(timer_frame, textvariable=self.timer_min, width=3)
+        min_entry.pack(side=tk.LEFT)
+        ttk.Label(timer_frame, text="分钟").pack(side=tk.LEFT, padx=(0, 5))
+
+        # 秒钟输入
+        self.timer_sec = tk.StringVar(value="0")
+        sec_entry = ttk.Entry(timer_frame, textvariable=self.timer_sec, width=3)
+        sec_entry.pack(side=tk.LEFT)
+        ttk.Label(timer_frame, text="秒").pack(side=tk.LEFT, padx=(0, 5))
+
+        # 下次同步时间显示
+        self.next_sync_var = tk.StringVar(value="")
+        self.next_sync_label = ttk.Label(timer_frame, textvariable=self.next_sync_var,
+                                         foreground="gray")
+        self.next_sync_label.pack(side=tk.LEFT, padx=10)
 
         # 移除模式选择，添加模式说明
         mode_info = ttk.Label(options_frame,
@@ -346,12 +385,39 @@ class FileSyncApp:
             self.sync_button.config(state=tk.DISABLED)
             self.status_var.set("正在同步...")
 
-            # 在新线程中执行同步
-            sync_thread = threading.Thread(target=self.perform_sync)
+            # 在新线程中执行同步，非静默模式
+            sync_thread = threading.Thread(target=lambda: self.perform_sync(silent=False))
             sync_thread.daemon = True
             sync_thread.start()
 
-    def perform_sync(self):
+    def silent_sync(self):
+        """执行同步而不弹出确认对话框"""
+        # 检查源目录和目标目录是否有效
+        source_dir = self.source_var.get()
+        dest_dir = self.dest_var.get()
+
+        if not source_dir or not os.path.isdir(source_dir):
+            self.status_var.set("错误: 源文件夹无效")
+            return
+
+        if not dest_dir or not os.path.isdir(dest_dir):
+            self.status_var.set("错误: 目标文件夹无效")
+            return
+
+        if self.syncing:
+            return
+
+        # 开始同步
+        self.syncing = True
+        self.sync_button.config(state=tk.DISABLED)
+        self.status_var.set("定时同步开始...")
+
+        # 在新线程中执行同步，静默模式
+        sync_thread = threading.Thread(target=lambda: self.perform_sync(silent=True))
+        sync_thread.daemon = True
+        sync_thread.start()
+
+    def perform_sync(self, silent=False):
         """执行全量同步"""
         try:
             source_dir = self.source_var.get()
@@ -388,8 +454,6 @@ class FileSyncApp:
                     self.root.after(0, lambda t=timestamp, a=action, p=rel_path, s=file_size:
                     self.log_tree.insert("", 0, values=(t, a, p, s, "成功")))
 
-            # 删除处理部分已移除
-
             # 格式化总流量显示
             total_size_formatted = "0 B"
             size_bytes = total_bytes
@@ -399,13 +463,18 @@ class FileSyncApp:
                     break
                 size_bytes /= 1024.0
 
-            self.root.after(0, lambda: self.status_var.set(
-                f"同步完成，共处理 {files_processed} 个文件，总数据量 {total_size_formatted}"))
-            self.root.after(0, lambda: messagebox.showinfo("成功",
-                                                           f"文件同步完成，共处理 {files_processed} 个文件，总数据量 {total_size_formatted}"))
+            completion_message = f"同步完成，共处理 {files_processed} 个文件，总数据量 {total_size_formatted}"
+            self.root.after(0, lambda: self.status_var.set(completion_message))
+
+            # 只有在非静默模式下才显示弹窗
+            if not silent:
+                self.root.after(0, lambda: messagebox.showinfo("成功", completion_message))
         except Exception as e:
-            self.root.after(0, lambda: self.status_var.set(f"同步错误: {str(e)}"))
-            self.root.after(0, lambda: messagebox.showerror("错误", f"同步过程中发生错误: {str(e)}"))
+            error_message = f"同步错误: {str(e)}"
+            self.root.after(0, lambda: self.status_var.set(error_message))
+            # 只有在非静默模式下才显示错误弹窗
+            if not silent:
+                self.root.after(0, lambda: messagebox.showerror("错误", f"同步过程中发生错误: {str(e)}"))
         finally:
             self.syncing = False
             self.root.after(0, lambda: self.sync_button.config(state=tk.NORMAL))
@@ -416,7 +485,11 @@ class FileSyncApp:
         settings = {
             "source_dir": self.source_var.get(),
             "dest_dir": self.dest_var.get(),
-            "monitor_enabled": self.monitor_var.get()
+            "monitor_enabled": self.monitor_var.get(),
+            "timer_enabled": self.timer_var.get(),
+            "timer_hour": self.timer_hour.get(),
+            "timer_min": self.timer_min.get(),
+            "timer_sec": self.timer_sec.get()
         }
 
         try:
@@ -437,6 +510,14 @@ class FileSyncApp:
             if "dest_dir" in settings and os.path.isdir(settings["dest_dir"]):
                 self.dest_var.set(settings["dest_dir"])
 
+            # 加载定时器设置
+            if "timer_hour" in settings:
+                self.timer_hour.set(settings["timer_hour"])
+            if "timer_min" in settings:
+                self.timer_min.set(settings["timer_min"])
+            if "timer_sec" in settings:
+                self.timer_sec.set(settings["timer_sec"])
+
             if "monitor_enabled" in settings:
                 self.monitor_var.set(settings["monitor_enabled"])
                 if settings["monitor_enabled"] and self.source_var.get():
@@ -445,6 +526,11 @@ class FileSyncApp:
                     # 设置监控状态显示
                     self.monitor_status_var.set("正在监控中...")
                     self.monitor_status.config(foreground="green")
+
+            if "timer_enabled" in settings and settings["timer_enabled"]:
+                self.timer_var.set(True)
+                # 延迟启动定时器，确保UI已完全加载
+                self.root.after(1500, self.toggle_timer)
         except FileNotFoundError:
             # 配置文件不存在，使用默认值
             pass
@@ -494,6 +580,97 @@ class FileSyncApp:
                 json.dump(history, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"保存同步历史失败: {e}")
+
+    def toggle_timer(self):
+        """切换定时同步状态"""
+        if self.timer_var.get():
+            try:
+                # 检查间隔设置是否有效
+                hours = int(self.timer_hour.get())
+                minutes = int(self.timer_min.get())
+                seconds = int(self.timer_sec.get())
+
+                # 确保至少有一个值大于0
+                if hours <= 0 and minutes <= 0 and seconds <= 0:
+                    raise ValueError("至少需要设置一个大于0的时间间隔")
+
+                # 计算总秒数
+                total_seconds = hours * 3600 + minutes * 60 + seconds
+
+                # 启动定时器
+                self.start_timer(total_seconds)
+                self.next_sync_label.config(foreground="green")
+            except ValueError as e:
+                messagebox.showerror("错误", f"请输入有效的时间间隔: {str(e)}")
+                self.timer_var.set(False)
+        else:
+            # 停止定时器
+            self.stop_timer()
+            self.next_sync_var.set("")
+            self.next_sync_label.config(foreground="gray")
+
+    def start_timer(self, total_seconds):
+        """启动定时器"""
+        # 取消现有的定时器
+        if hasattr(self, 'timer_id') and self.timer_id:
+            self.root.after_cancel(self.timer_id)
+
+        # 计算下次同步时间
+        interval_ms = total_seconds * 1000  # 转换为毫秒
+        next_time = datetime.now() + timedelta(seconds=total_seconds)
+        self.next_sync_var.set(f"下次同步: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # 设置新的定时器
+        self.timer_id = self.root.after(interval_ms, self.timer_sync)
+
+    def stop_timer(self):
+        """停止定时器"""
+        if hasattr(self, 'timer_id') and self.timer_id:
+            self.root.after_cancel(self.timer_id)
+            self.timer_id = None
+            self.next_sync_var.set("")
+            self.next_sync_label.config(foreground="gray")
+
+    def timer_sync(self):
+        """定时器触发的同步操作"""
+        if not self.syncing and self.source_var.get() and self.dest_var.get():
+            # 执行同步，不需要用户确认
+            self.silent_sync()
+
+        # 如果定时器仍然启用，则设置下一次定时器
+        if self.timer_var.get():
+            hours = int(self.timer_hour.get())
+            minutes = int(self.timer_min.get())
+            seconds = int(self.timer_sec.get())
+            total_seconds = hours * 3600 + minutes * 60 + seconds
+            self.start_timer(total_seconds)
+
+    def silent_sync(self):
+        """执行同步而不弹出确认对话框"""
+        # 检查源目录和目标目录是否有效
+        source_dir = self.source_var.get()
+        dest_dir = self.dest_var.get()
+
+        if not source_dir or not os.path.isdir(source_dir):
+            self.status_var.set("错误: 源文件夹无效")
+            return
+
+        if not dest_dir or not os.path.isdir(dest_dir):
+            self.status_var.set("错误: 目标文件夹无效")
+            return
+
+        if self.syncing:
+            return
+
+        # 开始同步
+        self.syncing = True
+        self.sync_button.config(state=tk.DISABLED)
+        self.status_var.set("定时同步开始...")
+
+        # 在新线程中执行同步
+        sync_thread = threading.Thread(target=self.perform_sync)
+        sync_thread.daemon = True
+        sync_thread.start()
 
 if __name__ == "__main__":
     root = tk.Tk()
