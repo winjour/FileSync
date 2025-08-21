@@ -604,7 +604,8 @@ class FileSyncApp:
                         f"删除文件: {stats['deleted']} 个\n" +
                         f"\n成功操作: {stats['success']} 个\n" +
                         f"失败操作: {stats['failed']} 个\n" +
-                        f"\n总传输: {self.format_size(stats['total_bytes'])}"
+                        f"\n总传输: {self.format_size(stats['total_bytes'])}\n" +
+                        f"耗时: {duration} 秒"
                     )
                 else:
                     messagebox.showinfo("同步完成",
@@ -613,7 +614,8 @@ class FileSyncApp:
                         f"更新文件: {stats['updated']} 个\n" +
                         f"\n成功操作: {stats['success']} 个\n" +
                         f"失败操作: {stats['failed']} 个\n" +
-                        f"\n总传输: {self.format_size(stats['total_bytes'])}"
+                        f"\n总传输: {self.format_size(stats['total_bytes'])} \n" +
+                        f"耗时: {duration} 秒"
                     )
 
             self.status_var.set(f"同步完成，耗时 {duration} 秒")
