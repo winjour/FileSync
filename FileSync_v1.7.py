@@ -28,7 +28,7 @@ class FileSyncApp:
     def __init__(self, root):
         # 现有的初始化代码...
         self.root = root
-        self.root.title("FileSyc -- 文件同步备份工具")
+        self.root.title("FileSync_v1.7 -- 文件同步备份工具")
         self.root.geometry("900x720")
         self.root.minsize(800, 600)
 
@@ -1426,7 +1426,7 @@ class FileSyncApp:
         )
 
         # 创建系统托盘图标
-        self.icon = pystray.Icon("filesync", image, "FileSync", menu)
+        self.icon = pystray.Icon("filesync", image, "FileSync1.7", menu)
 
         # 设置双击行为
         self.icon.on_click = self.on_tray_click
