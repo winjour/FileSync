@@ -5,6 +5,9 @@
 # 增加单向模式（同步源文件增加、删除、修改操作）
 # 增加开机启动设置
 # 增加状态栏托盘
+# 同步完成后弹窗增加统计信息
+# 监控可设置延迟时间
+# 定时同步可设置静默同步，不弹窗
 
 import os
 import shutil
@@ -132,6 +135,12 @@ class FileSyncApp:
         sec_entry = ttk.Entry(timer_frame, textvariable=self.timer_sec, width=3)
         sec_entry.pack(side=tk.LEFT)
         ttk.Label(timer_frame, text="秒").pack(side=tk.LEFT, padx=(0, 5))
+
+        # 将静默同步选项放在时间输入框后面
+        self.silent_timer_var = tk.BooleanVar(value=True)
+        silent_timer_cb = ttk.Checkbutton(timer_frame, text="静默同步(不显示结果)",
+                                          variable=self.silent_timer_var)
+        silent_timer_cb.pack(side=tk.LEFT, padx=(15, 5))
 
         # 下次同步时间显示
         self.next_sync_var = tk.StringVar(value="")
@@ -521,8 +530,12 @@ class FileSyncApp:
             sync_thread.daemon = True
             sync_thread.start()
 
-    def silent_sync(self):
-        """执行同步而不弹出确认对话框"""
+    def silent_sync(self, force_silent=True):
+        """执行同步而不弹出确认对话框
+
+        参数:
+            force_silent: 是否强制静默模式，不显示结果对话框
+        """
         # 检查源目录和目标目录是否有效
         source_dir = self.source_var.get()
         dest_dir = self.dest_var.get()
@@ -543,8 +556,8 @@ class FileSyncApp:
         self.sync_button.config(state=tk.DISABLED)
         self.status_var.set("定时同步开始...")
 
-        # 在新线程中执行同步，静默模式
-        sync_thread = threading.Thread(target=lambda: self.perform_sync(silent=True))
+        # 在新线程中执行同步，静默模式由参数决定
+        sync_thread = threading.Thread(target=lambda: self.perform_sync(silent=force_silent))
         sync_thread.daemon = True
         sync_thread.start()
 
@@ -806,7 +819,8 @@ class FileSyncApp:
             "history_dir": self.history_dir_var.get(),
             "max_history": self.max_history_var.get(),
             "sync_mode": self.sync_mode.get(),
-            "autostart": self.autostart_var.get()
+            "autostart": self.autostart_var.get(),
+            "silent_timer": self.silent_timer_var.get()
         }
 
         try:
@@ -827,6 +841,9 @@ class FileSyncApp:
 
             if "dest_dir" in settings and os.path.isdir(settings["dest_dir"]):
                 self.dest_var.set(settings["dest_dir"])
+
+            if "silent_timer" in settings:
+                self.silent_timer_var.set(settings["silent_timer"])
 
             # 加载定时器设置
             if "timer_hour" in settings:
@@ -979,8 +996,8 @@ class FileSyncApp:
     def timer_sync(self):
         """定时器触发的同步操作"""
         if not self.syncing and self.source_var.get() and self.dest_var.get():
-            # 执行同步，不需要用户确认
-            self.silent_sync()
+            # 使用用户设置的静默模式选项
+            self.silent_sync(force_silent=self.silent_timer_var.get())
 
         # 如果定时器仍然启用，则设置下一次定时器
         if self.timer_var.get():
@@ -989,7 +1006,6 @@ class FileSyncApp:
             seconds = int(self.timer_sec.get())
             total_seconds = hours * 3600 + minutes * 60 + seconds
             self.start_timer(total_seconds)
-
 
     def browse_history_dir(self):
         directory = filedialog.askdirectory()
