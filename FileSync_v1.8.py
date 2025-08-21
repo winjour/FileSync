@@ -514,14 +514,23 @@ class FileSyncApp:
             if not source_dir or not dest_dir:
                 return
 
-            # 执行贡献模式同步
-            self.perform_contribute_sync(source_dir, dest_dir, silent)
+            # 执行贡献模式同步，获取统计数据
+            stats = self.perform_contribute_sync(source_dir, dest_dir, silent)
 
             end_time = time.time()
             duration = round(end_time - start_time, 2)
 
             if not silent:
-                messagebox.showinfo("完成", f"同步完成，耗时 {duration} 秒")
+                # 显示带有详细统计信息的完成消息
+                stats_message = (
+                    f"同步完成，耗时 {duration} 秒\n\n"
+                    f"新增: {stats['added']} 个文件\n"
+                    f"更新: {stats['updated']} 个文件\n"
+                    f"\n成功: {stats['success']} 个文件\n"
+                    f"失败: {stats['failed']} 个文件\n"
+                    f"\n总大小: {self.format_size(stats['total_bytes'])}"
+                )
+                messagebox.showinfo("完成", stats_message)
 
             self.status_var.set(f"同步完成，耗时 {duration} 秒")
 
@@ -539,48 +548,65 @@ class FileSyncApp:
         src_states = self.get_folder_state(source_dir)
         dest_states = self.get_folder_state(dest_dir)
 
-        # 统计
-        files_processed = 0
-        total_bytes = 0
+        # 统计数据
+        stats = {
+            'added': 0,  # 新增文件数
+            'updated': 0,  # 更新文件数
+            'success': 0,  # 成功操作数
+            'failed': 0,  # 失败操作数
+            'total_bytes': 0  # 总字节数
+        }
 
         # 处理新增和更新的文件
         for rel_path, src_hash in src_states.items():
-            if rel_path not in dest_states or dest_states[rel_path] != src_hash:
-                source_path = os.path.join(source_dir, rel_path)
-                dest_path = os.path.join(dest_dir, rel_path)
+            try:
+                if rel_path not in dest_states or dest_states[rel_path] != src_hash:
+                    source_path = os.path.join(source_dir, rel_path)
+                    dest_path = os.path.join(dest_dir, rel_path)
 
-                # 保存历史版本
-                if self.history_var.get() and rel_path in dest_states and os.path.exists(dest_path):
-                    self.save_file_history(dest_path, rel_path)
+                    # 保存历史版本
+                    if self.history_var.get() and rel_path in dest_states and os.path.exists(dest_path):
+                        self.save_file_history(dest_path, rel_path)
 
-                # 获取文件大小
-                file_size_bytes = os.path.getsize(source_path)
-                file_size = self.get_file_size(source_path)
-                total_bytes += file_size_bytes
-                files_processed += 1
+                    # 获取文件大小
+                    file_size_bytes = os.path.getsize(source_path)
+                    file_size = self.get_file_size(source_path)
+                    stats['total_bytes'] += file_size_bytes
 
-                # 确保目标目录存在
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    # 确保目标目录存在
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-                # 复制文件
-                shutil.copy2(source_path, dest_path)
+                    # 复制文件
+                    shutil.copy2(source_path, dest_path)
 
-                # 记录到日志
-                action = "新增" if rel_path not in dest_states else "更新"
+                    # 更新统计信息
+                    if rel_path not in dest_states:
+                        stats['added'] += 1
+                        action = "新增"
+                    else:
+                        stats['updated'] += 1
+                        action = "更新"
+
+                    stats['success'] += 1
+
+                    # 记录到日志
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    self.log_tree.insert("", 0, values=(timestamp, action, rel_path, file_size, "成功"))
+            except Exception as e:
+                stats['failed'] += 1
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.log_tree.insert("", 0, values=(timestamp, action, rel_path, file_size, "成功"))
+                action = "新增" if rel_path not in dest_states else "更新"
+                self.log_tree.insert("", 0, values=(timestamp, action, rel_path, "N/A", f"失败: {str(e)}"))
 
         # 不处理删除操作
 
         # 更新状态栏
         if not silent:
-            status_text = f"已同步 {files_processed} 个文件，共 {self.format_size(total_bytes)}"
+            status_text = f"已同步 {stats['success']} 个文件，共 {self.format_size(stats['total_bytes'])}"
             self.status_var.set(status_text)
 
-        # 更新状态栏
-        if not silent:
-            status_text = f"已同步 {files_processed} 个文件，共 {self.format_size(total_bytes)}"
-            self.status_var.set(status_text)
+        # 返回统计数据
+        return stats
 
     def perform_mirror_sync(self, source_dir, dest_dir, silent=False):
         """执行镜像模式同步（双向同步）"""
