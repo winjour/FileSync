@@ -38,7 +38,7 @@ class FileSyncApp:
     def __init__(self, root):
         # 现有的初始化代码...
         self.root = root
-        self.root.title("FileSync_v1.7.2 -- 文件同步备份工具")
+        self.root.title("FileSync_v1.7.3 -- 文件同步备份工具")
         self.root.geometry("900x720")
         self.root.minsize(800, 600)
 
